@@ -18,7 +18,7 @@ font = pygame.font.Font('freesansbold.ttf', 32)
 
     
 circle1 = Circle(5, 5)
-circle2 = Circle(7, 7)
+circle2 = Circle(6, 7)
 environment = PhysicsEnvironment(sim_scaling, sim_scaling, [circle1, circle2])
 
 time_delta = 1
@@ -53,10 +53,10 @@ while running:
             running = False
 
     environment.run_tick(time_delta)
-        
+
         
     for object in environment.objects:
-        centre_on_screen = toScreenCoords((object.pos[0], object.pos[1]))
+        centre_on_screen = toScreenCoords((object.x, object.y))
         pygame.draw.circle(screen, (0, 0, 255), centre_on_screen, radius=object.radius * screen_scaling)
         point_on_circle = (math.cos(object.rot) * object.radius + object.pos[0], math.sin(object.rot) * object.radius + object.pos[1],)
         point_on_circle_on_screen = toScreenCoords(point_on_circle)
