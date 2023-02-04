@@ -172,15 +172,20 @@ class PhysicsEnvironment():
                     collisions_test_dict[obj].append(line)
 
             
-        # check if the items collided
+        # check if the items collided (fast)
         collided_list = {}
         for obj in list(collisions_test_dict.keys()):
+            collided_list[obj] = []
             for obj2 in collisions_test_dict[obj]:
                 if obj2.type == "line":
-                    pass                    
+                    if self.check_circle_line_collision(obj, obj2):
+                        collided_list[obj].append(obj2)
+                        
                 if obj2.type == "circle":
-                    pass
+                    if self.check_circle_circle_collision(obj, obj2):
+                        collided_list[obj].append(obj2)
         
+        # work out the collision time for every collision
         
         
         
@@ -320,56 +325,121 @@ class PhysicsEnvironment():
         else:
             return False
     
-    def point_in_rectangle(p1, p2, p3, p4, point):
-        A = np.array(p1)
-        B = np.array(p2)
-        C = np.array(p3)
-        M = np.array(p4)
-        return 0 <= np.dot(A*B,A*M) <= np.dot(A*B,A*B) and 0 <= np.dot(B*C,B*M) <= np.dot(B*C,B*C)
+    def point_in_rectangle(self, A : list, B : list, C, D, P):
+        AB = [B[0] - A[0], B[1] - A[0]]
+        AP = [P[0] - A[0], P[1] - A[0]]
+        BC = [C[0] - B[0], B[1] - B[0]]
+        BP = [P[0] - B[0], P[1] - B[0]]
+        
+        # check the x offset to the maximum possible offset
+        X = np.dot(AB, AP)
+        Xmax = np.dot(AB, AB)
+        Y = np.dot(BC, BP)
+        Ymax = np.dot(BC, BC)
+        
+        return 0 <= X <= Xmax and 0 <= Y <= Ymax
+    
+    # only need 
+    def check_rectangle_intersection(self, p1, p2, p3, p4, r1, r2, r3, r4):
+        # check if each line of the path of the circles crosses another
+        # rect 1 lines
+        rect1_lines = [
+            Line(p1, p2),
+            Line(p2, p3),
+            Line(p3, p4),
+            Line(p4, p1),
+        ]
+        # rect 2 lines
+        rect2_lines = [
+            Line(r1, r2),
+            Line(r2, r3),
+            Line(r3, r4),
+            Line(r4, r1),
+        ]
+        
+        all_comparisons = []
+        
+        for line1 in rect1_lines:
+            for line2 in rect2_lines:
+                all_comparisons.append(type(self.line_segment_intersection(line1.p1, line1.p2, line2.p1, line2.p2)) == list)
+        
+        # check if one of the points is inside the rect
+        points_in_rect = [
+            self.point_in_rectangle(p1, p2, p3, p4, r1),
+            self.point_in_rectangle(p1, p2, p3, p4, r2),
+            self.point_in_rectangle(p1, p2, p3, p4, r3),
+            self.point_in_rectangle(p1, p2, p3, p4, r4),
+        ]
+
+        return any(all_comparisons) and any(points_in_rect)
+        
+    # moving circles
+    def check_circle_circle_collision(self, circle1: Circle, circle2 : Circle, time_step_size=1):
+        circle1_end_pos = list((circle1.pos + circle1.vel) * time_step_size)
+        # ends at the "next" position
+        circle1_vector = Line(list(circle1.pos), circle1_end_pos)
+
+        circle2_end_pos = list((circle2.pos + circle2.vel) * time_step_size)
+        # ends at the "next" position
+        circle2_vector = Line(list(circle2.pos), circle2_end_pos)        
+        # 1: lines intersect
+        if (self.line_segment_intersection(circle1_vector.p1, circle1_vector.p2, circle2_vector.p1, circle2_vector.p2)):
+            return True
+        
+        # 2: the end pos is both the radii from the other line
+        close_c1start = self.closest_point_on_line(circle2.pos, circle2_end_pos, circle1.x, circle1.y)
+        close_c1end = self.closest_point_on_line(circle2.pos, circle2_end_pos, circle1_end_pos[0], circle1_end_pos[1])
+        close_c2start = self.closest_point_on_line(circle1.pos, circle1_end_pos, circle2.x, circle2.y)
+        close_c2end = self.closest_point_on_line(circle1.pos, circle1_end_pos, circle2_end_pos[0], circle2_end_pos[1])
+        
+        intersects_on_endpoint = any([
+            self.distance(close_c1start, circle1.pos) < circle1.radius + circle2.radius,
+            self.distance(close_c1end, circle1_end_pos) < circle1.radius + circle2.radius,
+            self.distance(close_c2start, circle2.pos) < circle1.radius + circle2.radius,
+            self.distance(close_c2end, circle2_end_pos) < circle1.radius + circle2.radius,
+        ])
+        
+        if intersects_on_endpoint:
+            return True
+        
+        return False
+        
+
+        
+        
+        
     
     def check_circle_line_collision(self, circle : Circle, line: Line, time_step_size=1):
-        #  3 area's to check if the ball along the vector line crosses
-        vector_end_pos = list((circle.pos + circle.vel) * time_step_size)
+        circle_end_pos = list((circle.pos + circle.vel) * time_step_size)
         # ends at the "next" position
-        movement_vector = Line(list(circle.pos), vector_end_pos)
-        
-        raw_offset = [vector_end_pos[0] - circle.x, vector_end_pos[1] - circle.y]
-        
-        # the offset if flipped 90 degrees
-        offset = np.arrat([circle.radius * (raw_offset[1] / self.distance(vector_end_pos, circle.pos)), circle.radius * (raw_offset[0] / self.distance(vector_end_pos, circle.pos))])
-        
-        # a box that covers the entire path the circle will follow this tick
-        line1 = Line(circle.pos - offset, circle.pos + offset)
-        line2 = Line(circle.pos + offset, vector_end_pos + offset)
-        line3 = Line(vector_end_pos + offset, vector_end_pos - offset)
-        line4 = Line(vector_end_pos - offset, circle.pos - offset)
-        
-        is_touching_line1 = type(self.line_segment_intersection(line1.p1, line1.p2, line.p1, line.p2)) == list
-        is_touching_line2 = type(self.line_segment_intersection(line2.p1, line2.p2, line.p1, line.p2)) == list
-        is_touching_line3 = type(self.line_segment_intersection(line3.p1, line3.p2, line.p1, line.p2)) == list
-        is_touching_line4 = type(self.line_segment_intersection(line4.p1, line4.p2, line.p1, line.p2)) == list
-        
-        is_touching_current_circle = self.check_line_circle_intersection(circle, line)
-        is_touching_final_circle = self.check_line_circle_intersection(vector_end_pos, line)
-        
-        # check if the line is in the box
-        p1_in_box = line.p1[0] < 
-        
-        if (
-            is_touching_line1 or 
-            is_touching_line2 or
-            is_touching_line3 or
-            is_touching_line4 or
-            is_touching_current_circle or
-            is_touching_final_circle):
+        circle_vector = Line(list(circle.pos), circle_end_pos)
+ 
+        # 1: lines intersect
+        if (self.line_segment_intersection(circle_vector.p1, circle_vector.p2, line.p1, line.p2)):
             return True
-        else:
-            return False        
         
+        # 2: the end pos is both the radius from the other line
+        # c = circle vector
+        # l = line
+        close_cstart = self.closest_point_on_line(line.p1, line.p2, circle.x, circle.y)
+        close_cend = self.closest_point_on_line(line.p1, line.p2, circle_end_pos[0], circle_end_pos[1])
+        close_lstart = self.closest_point_on_line(circle_vector.p1, circle_vector.p2, line.p1[0], line.p1[1])
+        close_lend = self.closest_point_on_line(circle_vector.p1, circle_vector.p2, line.p2[0], line.p2[1])
+        
+        intersects_on_endpoint = any([
+            self.distance(close_cstart, circle.pos) < circle.radius,
+            self.distance(close_cend, circle_end_pos) < circle.radius,
+            self.distance(close_lstart, line.p1) < circle.radius,
+            self.distance(close_lend, line.p2) < circle.radius,
+        ])
+        
+        if intersects_on_endpoint:
+            return True
+        
+        return False
+
     
         
-        
-    
     def circle_line_collision(self, circle : Circle, line: Line, time_step_size=1):
         # https://ericleong.me/research/circle-line/
         # Moving Circle and Static Line Segment
