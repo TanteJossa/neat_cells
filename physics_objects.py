@@ -157,13 +157,13 @@ class PhysicsEnvironment():
     def run_tick(self, time_step_size=1):
         
         # filter all the times that can not be in range of the obj
-        collisions_test_dict = {}
-        for obj in self.objects:
-            collisions_test_dict[obj] : dict[PhysicsObject: list[Line, Circle]] = []
+        collisions_test_dict : dict[Circle: list[Line | Circle]]  = {}
+        for circle in filter(lambda x: x.type == 'circle', self.objects):
+            collisions_test_dict[circle] = []
             for obj2 in self.objects:
-                if (math.abs(obj.x - obj2.x) < MAX_SPEED or
-                    math.abs(obj.y - obj2.y) < MAX_SPEED):
-                    collisions_test_dict[obj].append(obj2)                
+                if (math.abs(circle.x - obj2.x) < MAX_SPEED or
+                    math.abs(circle.y - obj2.y) < MAX_SPEED):
+                    collisions_test_dict[circle].append(obj2)                
             
             for line in self.lines:
                 distance_to_line = closest_point_on_line(line.p1[0], line.p1[1], line.p2[0], line.p2[1], obj.x, obj.y)
@@ -174,21 +174,27 @@ class PhysicsEnvironment():
             
         # check if the items collided (fast)
         collided_list = {}
-        for obj in list(collisions_test_dict.keys()):
-            collided_list[obj] = []
-            for obj2 in collisions_test_dict[obj]:
+        for circle in list(collisions_test_dict.keys()):
+            collided_list[circle] = []
+            for obj2 in collisions_test_dict[circle]:
                 if obj2.type == "line":
-                    if self.check_circle_line_collision(obj, obj2):
-                        collided_list[obj].append(obj2)
+                    if self.check_circle_line_collision(circle, obj2):
+                        collided_list[circle].append(obj2)
                         
                 if obj2.type == "circle":
-                    if self.check_circle_circle_collision(obj, obj2):
-                        collided_list[obj].append(obj2)
+                    if self.check_circle_circle_collision(circle, obj2):
+                        collided_list[circle].append(obj2)
         
         # work out the collision time for every collision
-        
-        
-        
+        collision_time = {}
+        for circle in list(collided_list.keys()):
+            collision_time[circle] = {}
+            for obj2 in collided_list[circle]:
+                if obj2.type == "line":
+                    time, position = self.circle_line_collision_time(circle, obj2)
+                    collision_time[circle].append({'time': time, 'position': position})
+                if obj2.type == "circle":
+
         
         
         
@@ -243,7 +249,7 @@ class PhysicsEnvironment():
                 obj.detect_line_collision(0, self.size[1], self.size[0], self.size[1])):
                 obj.vx *= -1
     
-    def closest_point_on_line(self, p1: list[int, float], p2: list[int, float], x0, y0):
+    def closest_point_on_line(self, p1: list[int | float], p2: list[int | float], x0, y0):
         lx1 = p1[0]
         ly1 = p1[1]
         lx2 = p2[0]
@@ -285,7 +291,7 @@ class PhysicsEnvironment():
         return False
     
     # two infinite lines intersection point
-    def intersection_point(p1, p2, p3, p4):
+    def intersection_point(self, p1, p2, p3, p4):
         x1, y1 = p1
         x2, y2 = p2
         x3, y3 = p3
@@ -324,6 +330,29 @@ class PhysicsEnvironment():
             return True
         else:
             return False
+        
+    def point_on_percent_of_line(self, p1, p2, percent: float):
+        line_vector =  np.array([p2.x - p1.x, p2.y - p1.y])
+        return p1 + (line_vector * percent) 
+    
+    def circle_line_collision_time(self, circle : Circle, line: Line, time_step_size=1):
+        closest_point = self.closest_point_on_line(line.p1, line.p2, circle.x, circle.y)
+        distance_to_closest_point = self.distance(circle.pos, closest_point)
+        
+        ratio_current_vs_collision_triangle = circle.radius / distance_to_closest_point
+        
+        circle_end_pos = list((circle.pos + circle.vel) * time_step_size)
+        
+        intersection_point = self.intersection_point(circle, circle_end_pos, line.p1, line.p2)
+        
+        collision_point = self.point_on_percent_of_line(circle.pos, intersection_point, ratio_current_vs_collision_triangle)
+        
+        distance_to_collision = self.distance(circle.pos, collision_point)
+        distance_to_end = self.distance(circle.pos, circle_end_pos)
+        
+        return distance_to_collision / distance_to_end, collision_point
+        
+        
     
     def point_in_rectangle(self, A : list, B : list, C, D, P):
         AB = [B[0] - A[0], B[1] - A[0]]
