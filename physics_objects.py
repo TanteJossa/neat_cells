@@ -161,8 +161,8 @@ class PhysicsEnvironment():
         for circle in filter(lambda x: x.type == 'circle', self.objects):
             collisions_test_dict[circle] = []
             for obj2 in self.objects:
-                if (math.abs(circle.x - obj2.x) < MAX_SPEED or
-                    math.abs(circle.y - obj2.y) < MAX_SPEED):
+                if (math.abs(circle.x - obj2.x) < MAX_SPEED * time_step_size or
+                    math.abs(circle.y - obj2.y) < MAX_SPEED * time_step_size):
                     collisions_test_dict[circle].append(obj2)                
             
             for line in self.lines:
@@ -194,7 +194,7 @@ class PhysicsEnvironment():
                     time, position = self.circle_line_collision_time(circle, obj2)
                     collision_time[circle].append({'time': time, 'position': position})
                 if obj2.type == "circle":
-
+                    time, p3 = self
         
         
         
