@@ -45,15 +45,18 @@ def line_intersection(p0, p1, p2, p3):
     
 
 class PhysicsObject():
-    def __init__(self, x=0, y=0, vx=0, vy=0, mass=1, angular_velocity=0) -> None:
-        self.pos = np.array([x, y])
+    def __init__(self, x=0.0, y=0.0, vx=0.0, vy=0.0, mass=1.0, angular_velocity=0) -> None:
+        self.pos = np.array([x, y], dtype=np.float64)
         self.vel = np.array([vx, vy], dtype=np.float64)
         self.forces = []
         self.mass:float = mass
         self.rot:float = 0
         self.type = "None"
         self.angular_velocity:float = angular_velocity
-        
+    
+    def end_pos(self, time_step_size):
+        return self.pos + (self.vel - self.pos) * time_step_size
+    
     @property
     def x(self):
         return self.pos[0]
@@ -86,11 +89,12 @@ class PhysicsObject():
     def vy(self, value):
         self.vel[1] = value
         
-    def apply_force(self, force: list[float, int], time_step_size = 1):
+    def apply_force(self, force: list[float, int],time_step_size=1): 
+
         self.vel[0] += force[0] / self.mass * time_step_size
         self.vel[1] += force[1] / self.mass * time_step_size
     
-    def apply_forces(self, time_step_size):
+    def  apply_forces(self, time_step_size=1):
         for force in self.forces:
             self.apply_force(force, time_step_size)
     
@@ -114,6 +118,9 @@ class Circle(PhysicsObject):
         self.radius = radius
         self.type = "circle"
     
+    def end_pos(self, time_step_size):
+        return self.pos + (self.vel - self.pos) * time_step_size
+        
     def update(self, time_step_size:float=1):
         self.rot = self.rot * ROTATION_SLOW_DOWN * time_step_size
     
@@ -149,10 +156,11 @@ class PhysicsEnvironment():
         self.size : list = [sizex, sizey]
         self.objects :list[PhysicsObject, Circle, Line] = objects
         self.lines : list[Line] = lines
+        self.lines += [Line([0,0], [sizex, 0]), Line([sizex, 0], [sizex, sizey]), Line([sizex, sizey], [0, sizey]), Line([0, sizey], [0, 0]), ]
     
-    @property.physics_objects
-    def physics_objects(self):
-        return filter(lambda x: x.type in ["circle"], self.objects)
+    @property
+    def moving_objects(self):
+        return list(filter(lambda x: x.type == 'circle', self.objects))
     
     def run_tick(self, time_step_size=1):
         
@@ -161,15 +169,17 @@ class PhysicsEnvironment():
         for circle in filter(lambda x: x.type == 'circle', self.objects):
             collisions_test_dict[circle] = []
             for obj2 in self.objects:
-                if (math.abs(circle.x - obj2.x) < MAX_SPEED * time_step_size or
-                    math.abs(circle.y - obj2.y) < MAX_SPEED * time_step_size):
-                    collisions_test_dict[circle].append(obj2)                
+                if circle != obj2:
+
+                    if (np.abs(circle.x - obj2.x) < MAX_SPEED * time_step_size + circle.radius + obj2.radius or
+                        np.abs(circle.y - obj2.y) < MAX_SPEED * time_step_size + circle.radius + obj2.radius):
+                        collisions_test_dict[circle].append(obj2)                
             
             for line in self.lines:
-                distance_to_line = closest_point_on_line(line.p1[0], line.p1[1], line.p2[0], line.p2[1], obj.x, obj.y)
-                if (math.abs(obj.x - distance_to_line[0]) < MAX_SPEED or
-                    math.abs(obj.y - distance_to_line[1]) < MAX_SPEED):
-                    collisions_test_dict[obj].append(line)
+                closest_point = closest_point_on_line(line.p1[0], line.p1[1], line.p2[0], line.p2[1], circle.x, circle.y)
+                distance_to_point = self.distance(circle.pos, closest_point)
+                if distance_to_point < (MAX_SPEED) * time_step_size + circle.radius:
+                    collisions_test_dict[circle].append(line)
 
             
         # check if the items collided (fast)
@@ -185,69 +195,62 @@ class PhysicsEnvironment():
                     if self.check_circle_circle_collision(circle, obj2):
                         collided_list[circle].append(obj2)
         
+        
         # work out the collision time for every collision
-        collision_time = {}
+        collision_time:dict[Circle:Line|Circle] = {}
         for circle in list(collided_list.keys()):
-            collision_time[circle] = {}
+            collision_time[circle] = []
             for obj2 in collided_list[circle]:
                 if obj2.type == "line":
-                    time, position = self.circle_line_collision_time(circle, obj2)
-                    collision_time[circle].append({'time': time, 'position': position})
+                    time, position = self.circle_line_collision_time(circle, obj2, time_step_size)
+                    if time:  
+                        collision_time[circle].append({'time': time, 'position': position, 'obj': obj2})
                 if obj2.type == "circle":
-                    time, p3 = self
+                    time = self.circle_circle_collision_time(circle.pos, circle.end_pos(time_step_size), obj2.pos, obj2.end_pos(time_step_size), circle.radius, obj2.radius, time_step_size)
+                    if time != None:
+                        collision_time[circle].append({'time': time, 'obj': obj2})
+            collision_time[circle] = list(filter(lambda x: not math.isnan(float(x['time'])) and 0 < x['time'] < 1,collision_time[circle]))
+
         
-        
-        
-        
-        
-        
-        
-        
-        for obj in self.objects:
-            obj.apply_forces()
-    
-        
-        
-        
-        
-        
-        
-        
-        for obj in self.objects:
-            obj.forces = []
+        # work out the collision response (1. the new end pos 2. the new speed vector))
+        for circle in list(collision_time.keys()):
+            sorted_cells = sorted(collision_time[circle],key=lambda x: x['time'])
+
+            for collision_data in sorted_cells:
+                if collision_data['obj'].type == 'line':
+
+                    new_vel = self.circle_line_collision_response(circle, collision_data['obj'], collision_data['time'], time_step_size)
+
+                    vel_diff = new_vel - circle.vel
+                    force_to_get_vel = vel_diff * circle.mass
+
+                    circle.forces.append(list(force_to_get_vel))
+                    
+                    
+                if collision_data['obj'].type == 'circle':
+                    circle2 = collision_data['obj']
+                    circle1_final_vel, circle2_final_vel = self.circle_circle_collision_response(circle, circle2, collision_data['time'])
+
+                    c1_current_vel = circle.vel - circle.pos
+                    c2_current_vel = circle2.vel - circle2.pos
+                    
+                    c1_vel_diff = circle1_final_vel - c1_current_vel
+                    c2_vel_diff = circle2_final_vel - c2_current_vel
+                    
+                    c1_force_to_get_vel = c1_vel_diff * circle.mass
+                    c2_force_to_get_vel = c2_vel_diff * circle2.mass
+                                            
+                    circle.forces.append(list(c1_force_to_get_vel))
+                    circle2.forces.append(list(c2_force_to_get_vel))
+            
+            
+        for obj in self.moving_objects:
             obj.forces.append([0, -1])
-            
-            
-        circle_list = enumerate(list(filter(lambda x: x.type == "circle", self.objects)))
-        detection_dict = {}
-        for index1, circle in circle_list:
-            detection_dict[circle] = []
-            for index2, circle2 in circle_list:
-                if index2 > index1:
-                    detection_dict[circle].append(circle2)
-
-        for circle1 in list(detection_dict.keys()):
-            for circle2 in detection_dict[circle1]:
-                if circle1.overlaps(circle2):
-                    self.circle_collision(circle1, circle2, time_step_size)
-
-        for obj in self.objects:
             obj.apply_forces(time_step_size)
-            speed = math.sqrt(obj.vx ** 2 + obj.vy ** 2)
-            obj.vel *= 1 - MOVING_DRAG * time_step_size * (1 / ( -speed + MAX_SPEED))
-            
-        
-        for obj in self.objects:
-            pos_change = obj.vel * time_step_size
-            obj.pos = obj.pos + pos_change
-            
-        for obj in self.objects:
-            if (obj.detect_line_collision(0, 0, self.size[0], 0 ) or
-                obj.detect_line_collision(0, self.size[1], self.size[0], self.size[1])):
-                obj.vy *= -1
-            if (obj.detect_line_collision(0, 0, 0, self.size[1]) or 
-                obj.detect_line_collision(0, self.size[1], self.size[0], self.size[1])):
-                obj.vx *= -1
+            obj.apply_velocity(time_step_size)
+            obj.forces = []
+    
+
     
     def closest_point_on_line(self, p1: list[int | float], p2: list[int | float], x0, y0):
         lx1 = p1[0]
@@ -291,35 +294,26 @@ class PhysicsEnvironment():
         return False
     
     # two infinite lines intersection point
-    def intersection_point(self, p1, p2, p3, p4):
-        x1, y1 = p1
-        x2, y2 = p2
-        x3, y3 = p3
-        x4, y4 = p4
-        
-        # Calculate the denominator
-        denominator = ((y4 - y3) * (x2 - x1)) - ((x4 - x3) * (y2 - y1))
+    def intersection_point(self, p1, p2, p3,p4):
+        line1 = [p1, p2]
+        line2 = [p3, p4]
+        xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
+        ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
 
-        # Check if the lines are parallel
-        if denominator == 0:
-            return None
+        def det(a, b):
+            return a[0] * b[1] - a[1] * b[0]
 
-        # Calculate the numerator for the first line
-        numerator_a = ((x4 - x3) * (y1 - y3)) - ((y4 - y3) * (x1 - x3))
+        div = det(xdiff, ydiff)
+        if div == 0:
+            return False
 
-        # Calculate the numerator for the second line
-        numerator_b = ((x2 - x1) * (y1 - y3)) - ((y2 - y1) * (x1 - x3))
-
-        # Calculate the intersection point
-        ua = numerator_a / denominator
-        ub = numerator_b / denominator
-        x = x1 + (ua * (x2 - x1))
-        y = y1 + (ua * (y2 - y1))
-
+        d = (det(*line1), det(*line2))
+        x = det(d, xdiff) / div
+        y = det(d, ydiff) / div
         return [x, y]
 
     def distance(self, p1, p2):
-        return math.sqrt((p2[0] - p1[0])**2 + (p2[1]**2 - p1[1]**2))
+        return math.sqrt(np.abs((p2[0] - p1[0])**2 + (p2[1]**2 - p1[1]**2)))
 
     def point_on_line(self, line: Line, p):        
         return self.distance(line.p1, p) + self.distance(line.p2, p) == self.distance(line.p1, line.p2);
@@ -332,28 +326,92 @@ class PhysicsEnvironment():
             return False
         
     def point_on_percent_of_line(self, p1, p2, percent: float):
-        line_vector =  np.array([p2.x - p1.x, p2.y - p1.y])
+        line_vector =  p2 - p1
         return p1 + (line_vector * percent) 
     
+    def circle_line_collision_response(self, circle: Circle, line: Line, time: float, time_step_size):
+        # closest point
+        point_1 = np.array(self.closest_point_on_line(line.p1, line.p2, circle.x, circle.y))
+        point_2 = circle.pos + time * circle.vel
+        point_c = np.array(self.closest_point_on_line(line.p1, line.p2, point_2[0], point_2[1]))
+        point_3 = point_2 + (point_1 - point_c)
+        
+        print(
+            'point1', point_1,
+            'point2', point_2,
+            'point3', point_3,
+            'pointc', point_c
+        )
+        
+        direction = point_2 - (point_2 + 2 * (point_2 - point_3))
+        direction = np.flip(direction)
+        unit_direction = direction / math.sqrt(direction[0]**2 + direction[1]**2 )
+        print(unit_direction, direction)
+        final_vel = unit_direction * math.sqrt(direction[0]**2 + direction[1]**2 ) 
+        
+        return final_vel
+    
+    def circle_circle_collision_response(self, circle1: Circle, circle2: Circle, time: float):
+        circle1_collision_point = circle1.pos + time * circle1.vel
+        circle2_collision_point = circle2.pos + time * circle2.vel
+
+        
+        distance_between_collision = self.distance(circle1_collision_point, circle2_collision_point)
+        
+        norm = np.divide(circle2_collision_point - circle1_collision_point, distance_between_collision)
+        
+        p = np.divide((2 * (circle1.vel * norm - circle2.vel * norm)), (circle1.mass + circle2.mass))
+        
+        c1_final_vel = circle1.vel - p * circle1.mass * norm
+        c2_final_vel = circle2.vel + p * circle2.mass * norm
+                
+        return c1_final_vel, c2_final_vel
+    
+    def circle_circle_collision_time(self, p1:list|tuple, p2:list|tuple, p3:list|tuple, p4:list|tuple, r1:float|int,r2:float|int, time_step_size=1):
+        
+        v1 = (p2 - p1) * time_step_size
+        v2 = (p4 - p3) * time_step_size
+        
+        a, b, c, d, g, h, m, n, r = p1[0], p1[1], p3[0], p3[1], v1[0], v1[1], v2[0], v2[1], r1 + r2
+        discriminant = ((2*(a - c + g - m - b + d - h + n))**2 
+                        - 4 * (a**2 - 2*a*c + b**2 - 2*b*d + c**2 + d**2 - r**2) 
+                            * (a**2 - 2*a*c + 2*a*g - 2*a*m + b**2 - 2*b*d + 2*b*h - 2*b*n + c**2 - 2*c*g + 2*c*m + d**2 - 2*d*h + 2*d*n + g**2 - 2*g*m + h**2 - 2*h*n + m**2 + n**2))
+        
+        if discriminant < 0:
+            return None
+        
+        numerator = (-math.sqrt(discriminant) + 2*a - 2*c + 2*g - 2*m + 2*b - 2*d + 2*h - 2*n)
+        denominator = 2 * (a**2 - 2*a*c + 2*a*g - 2*a*m + b**2 - 2*b*d + 2*b*h - 2*b*n + c**2 - 2*c*g + 2*c*m + d**2 - 2*d*h + 2*d*n + g**2 - 2*g*m + h**2 - 2*h*n + m**2 + n**2)
+
+        return numerator / denominator
+  
     def circle_line_collision_time(self, circle : Circle, line: Line, time_step_size=1):
         closest_point = self.closest_point_on_line(line.p1, line.p2, circle.x, circle.y)
         distance_to_closest_point = self.distance(circle.pos, closest_point)
         
         ratio_current_vs_collision_triangle = circle.radius / distance_to_closest_point
         
-        circle_end_pos = list((circle.pos + circle.vel) * time_step_size)
+        circle_end_pos = circle.end_pos(time_step_size)
+                
+        intersection_point = self.intersection_point(circle.pos, circle_end_pos, line.p1, line.p2)
+
+        intersection_point_offset = intersection_point - circle.pos
+
+        collision_point = intersection_point - intersection_point_offset * ratio_current_vs_collision_triangle
         
-        intersection_point = self.intersection_point(circle, circle_end_pos, line.p1, line.p2)
-        
-        collision_point = self.point_on_percent_of_line(circle.pos, intersection_point, ratio_current_vs_collision_triangle)
-        
+        if not intersection_point:
+            return False, False
+                        
         distance_to_collision = self.distance(circle.pos, collision_point)
         distance_to_end = self.distance(circle.pos, circle_end_pos)
         
-        return distance_to_collision / distance_to_end, collision_point
+        time = distance_to_collision / distance_to_end
         
+        if ((0 > time or time > 1)):
+            return False, False
+
+        return time, collision_point
         
-    
     def point_in_rectangle(self, A : list, B : list, C, D, P):
         AB = [B[0] - A[0], B[1] - A[0]]
         AP = [P[0] - A[0], P[1] - A[0]]
@@ -404,11 +462,11 @@ class PhysicsEnvironment():
         
     # moving circles
     def check_circle_circle_collision(self, circle1: Circle, circle2 : Circle, time_step_size=1):
-        circle1_end_pos = list((circle1.pos + circle1.vel) * time_step_size)
+        circle1_end_pos = circle1.end_pos(time_step_size)
         # ends at the "next" position
         circle1_vector = Line(list(circle1.pos), circle1_end_pos)
 
-        circle2_end_pos = list((circle2.pos + circle2.vel) * time_step_size)
+        circle2_end_pos = circle2.end_pos(time_step_size)
         # ends at the "next" position
         circle2_vector = Line(list(circle2.pos), circle2_end_pos)        
         # 1: lines intersect
@@ -432,14 +490,9 @@ class PhysicsEnvironment():
             return True
         
         return False
-        
 
-        
-        
-        
-    
     def check_circle_line_collision(self, circle : Circle, line: Line, time_step_size=1):
-        circle_end_pos = list((circle.pos + circle.vel) * time_step_size)
+        circle_end_pos = circle.end_pos(time_step_size)
         # ends at the "next" position
         circle_vector = Line(list(circle.pos), circle_end_pos)
  
@@ -466,14 +519,12 @@ class PhysicsEnvironment():
             return True
         
         return False
-
-    
-        
+  
     def circle_line_collision(self, circle : Circle, line: Line, time_step_size=1):
         # https://ericleong.me/research/circle-line/
         # Moving Circle and Static Line Segment
         
-        vector_end_pos = list((circle.pos + circle.vel) * time_step_size)
+        vector_end_pos = circle.end_pos(time_step_size)
         # ends at the "next" position
         movement_vector = Line(list(circle.pos), vector_end_pos)
         
@@ -533,13 +584,47 @@ class PhysicsEnvironment():
         
         # c is less than r away from (x1, y1) and on the movement vector.
         if closest_to_vector_end[0] ** 2 + closest_to_vector_end[1] ** 2 < circle.radius ** 2:
-            return False        
+            return False           
+    
+    def point_to_line_dist(self, point, p1, p2):
+        line = np.array([p1, p2])
         
-        
-        
+        # unit vector
+        unit_line = line[1] - line[0]
+        norm_unit_line = unit_line / np.linalg.norm(unit_line)
 
-    def detect_circle_circle_collision(circle, circle2):
-        pass    
+        # compute the perpendicular distance to the theoretical infinite line
+        segment_dist = (
+            np.linalg.norm(np.cross(line[1] - line[0], line[0] - point)) /
+            np.linalg.norm(unit_line)
+        )
+
+        diff = (
+            (norm_unit_line[0] * (point[0] - line[0][0])) + 
+            (norm_unit_line[1] * (point[1] - line[0][1]))
+        )
+
+        x_seg = (norm_unit_line[0] * diff) + line[0][0]
+        y_seg = (norm_unit_line[1] * diff) + line[0][1]
+
+        endpoint_dist = min(
+            np.linalg.norm(line[0] - point),
+            np.linalg.norm(line[1] - point)
+        )
+
+        # decide if the intersection point falls on the line segment
+        lp1_x = line[0][0]  # line point 1 x
+        lp1_y = line[0][1]  # line point 1 y
+        lp2_x = line[1][0]  # line point 2 x
+        lp2_y = line[1][1]  # line point 2 y
+        is_betw_x = lp1_x <= x_seg <= lp2_x or lp2_x <= x_seg <= lp1_x
+        is_betw_y = lp1_y <= y_seg <= lp2_y or lp2_y <= y_seg <= lp1_y
+        if is_betw_x and is_betw_y:
+            return segment_dist
+        else:
+            # if not, then return the minimum distance to the segment endpoints
+            return endpoint_dist
+
     
     def circle_collision(self, circle1: Circle, circle2: Circle, time_step_size=1):
         m1, m2 = circle1.mass, circle2.mass

@@ -1,8 +1,8 @@
 import math
 import pygame
-from physics_objects import Circle, PhysicsEnvironment
+from physics_objects import Circle, PhysicsEnvironment, Line
 import time
-
+import keyboard
 
 scaling = 1
 
@@ -18,13 +18,14 @@ font = pygame.font.Font('freesansbold.ttf', 32)
 
     
 circle1 = Circle(5, 5)
-circle2 = Circle(6, 7)
-environment = PhysicsEnvironment(sim_scaling, sim_scaling, [circle1, circle2])
+# circle2 = Circle(6, 7)
+
+environment = PhysicsEnvironment(sim_scaling, sim_scaling, [circle1])
 
 time_delta = 1
-running = True
-while running:
-    start_time = time.time()
+running = True      
+while running:      
+    start_time = time.time()  
     
     screen_width, screen_height = pygame.display.get_surface().get_size()
     
@@ -42,20 +43,28 @@ while running:
     toScreenCoords = lambda pos: [(pos[0]) * screen_scaling + sim_field_x_offset, (-pos[1]) * screen_scaling + sim_field_y_offset]
     screen.fill((0, 0, 0))
     
-    origin_point = toScreenCoords((0,0))
+    origin_point = toScreenCoords((0,0))  
     top_right = toScreenCoords((10, 10))
 
     sim_area = pygame.rect.Rect(origin_point[0], top_right[1], top_right[0] - origin_point[0], origin_point[1] - top_right[1])
     pygame.draw.rect(screen, (100, 100, 100), sim_area)
+
     
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+            
+    if keyboard.is_pressed(' '):
+        run_tick = True
+    else:
+        run_tick = False
 
-    environment.run_tick(time_delta)
+    if run_tick:
+        environment.run_tick(time_delta)
+        
 
         
-    for object in environment.objects:
+    for object in environment.moving_objects:
         centre_on_screen = toScreenCoords((object.x, object.y))
         pygame.draw.circle(screen, (0, 0, 255), centre_on_screen, radius=object.radius * screen_scaling)
         point_on_circle = (math.cos(object.rot) * object.radius + object.pos[0], math.sin(object.rot) * object.radius + object.pos[1],)
